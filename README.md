@@ -25,8 +25,14 @@ These values are copied from the associated article.
 |---|---|---:|---:|---:|---:|---:|
 | 2016 | LSTM + Attention | 3.8967 | 28.6424 | 5.3519 | 18.61 | 0.9416 |
 | 2016 | LSTM | 3.9239 | 29.2472 | 5.4081 | 18.47 | 0.9403 |
+| 2016 | GSA-KAN | 5.7131 | 64.6572 | 8.0410 | 24.74 | 0.8681 |
+| 2016 | TWDGCN | 4.0517 | 30.5908 | 5.5309 | 19.60 | 0.9376 |
+| 2016 | DeltaRelax-LSTM | 4.0578 | 30.5902 | 5.5308 | 19.82 | 0.9376 |
 | 2024 | LSTM + Attention | 5.1170 | 55.0752 | 7.4213 | 17.44 | 0.9286 |
 | 2024 | LSTM | 5.1183 | 55.1830 | 7.4285 | 17.01 | 0.9285 |
+| 2024 | GSA-KAN | 5.8502 | 68.7041 | 8.2888 | 20.35 | 0.9109 |
+| 2024 | TWDGCN | 5.2418 | 58.1848 | 7.6279 | 17.79 | 0.9246 |
+| 2024 | DeltaRelax-LSTM | 5.2923 | 59.1844 | 7.6931 | 18.06 | 0.9233 |
 
 ### Latest run of the refactored 2016 pipeline
 
@@ -123,4 +129,3 @@ python -m pytest -q
 ## Citation
 
 Citation metadata are available in [`CITATION.cff`](CITATION.cff). If this repository supports your work, please cite the associated IEEE Access article.
-
