@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite the associated IEEE Access article."
+title: "Traffic Flow Prediction with LSTM and Temporal Attention"
+type: software
+authors:
+  - family-names: Pakparvar
+    given-names: Hossein
+  - family-names: Matinkhah
+    given-names: S. Mojtaba
+  - family-names: Jamshidi
+    given-names: Arman
+repository-code: "https://github.com/armanjamshidi/Traffic-Flow-Prediction"
+preferred-citation:
+  type: article
+  title: "Traffic Flow Prediction in Intelligent Transportation Systems Using LSTM With Attention Mechanism"
+  authors:
+    - family-names: Pakparvar
+      given-names: Hossein
+    - family-names: Matinkhah
+      given-names: S. Mojtaba
+    - family-names: Jamshidi
+      given-names: Arman
+  journal: "IEEE Access"
+  volume: 14
+  year: 2026
+  doi: "10.1109/ACCESS.2026.3686508"
+
