@@ -22,6 +22,16 @@ from traffic_flow.metrics import regression_metrics
 
 
 MODEL_NAMES = ("lstm", "lstm_no_attention", "gsa_kan", "delta_relax_lstm")
+CORE_MODEL_NAMES = ("lstm", "lstm_no_attention")
+DATA_DEFAULTS = {
+    "train_file": "data/train.csv",
+    "test_file": "data/test.csv",
+    "target_column": "Lane 1 Flow (Veh/5 Minutes)",
+    "timestamp_column": "5 Minutes",
+    "timestamp_format": "%d/%m/%Y %H:%M",
+    "lag": 12,
+    "validation_ratio": 0.15,
+}
 DISPLAY_NAMES = {
     "lstm": "LSTM with Attention",
     "lstm_no_attention": "LSTM without Attention",
@@ -41,17 +51,26 @@ def _metadata(model_directory: Path, model_name: str) -> dict:
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
 
+def _resolved_value(args, metadata: dict, key: str):
+    command_line_value = getattr(args, key)
+    if command_line_value is not None:
+        return command_line_value
+    if key in metadata:
+        return metadata[key]
+    return DATA_DEFAULTS[key]
+
+
 def _test_data(args, model_name: str, metadata: dict):
     common = {
-        "train": args.train_file,
-        "test": args.test_file,
-        "lags": args.lag,
-        "validation_ratio": args.validation_ratio,
-        "target_column": args.target_column,
+        "train": _resolved_value(args, metadata, "train_file"),
+        "test": _resolved_value(args, metadata, "test_file"),
+        "lags": int(_resolved_value(args, metadata, "lag")),
+        "validation_ratio": float(_resolved_value(args, metadata, "validation_ratio")),
+        "target_column": _resolved_value(args, metadata, "target_column"),
     }
+    timestamp_column = _resolved_value(args, metadata, "timestamp_column")
+    timestamp_format = _resolved_value(args, metadata, "timestamp_format")
     if model_name == "delta_relax_lstm":
-        timestamp_column = args.timestamp_column or metadata.get("timestamp_column")
-        timestamp_format = args.timestamp_format or metadata.get("timestamp_format")
         if not timestamp_column:
             raise ValueError("A timestamp column is required to evaluate DeltaRelaxLSTM")
         result = process_delta_data(
@@ -62,8 +81,8 @@ def _test_data(args, model_name: str, metadata: dict):
         return result[4], result[5], result[6]
     result = process_data(
         **common,
-        timestamp_column=args.timestamp_column,
-        timestamp_format=args.timestamp_format,
+        timestamp_column=timestamp_column,
+        timestamp_format=timestamp_format,
     )
     return result[4], result[5], result[6]
 
@@ -87,16 +106,16 @@ def plot_results(y_true, predictions, output_path: Path, maximum_points: int = 2
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--models", nargs="+", choices=MODEL_NAMES, default=list(MODEL_NAMES))
+    parser.add_argument("--models", nargs="+", choices=MODEL_NAMES, default=list(CORE_MODEL_NAMES))
     parser.add_argument("--model-dir", default="artifacts/models")
     parser.add_argument("--output-dir", default="artifacts/evaluation")
-    parser.add_argument("--train-file", default="data/train.csv")
-    parser.add_argument("--test-file", default="data/test.csv")
-    parser.add_argument("--target-column", default="Lane 1 Flow (Veh/5 Minutes)")
-    parser.add_argument("--timestamp-column", default="5 Minutes")
-    parser.add_argument("--timestamp-format", default="%d/%m/%Y %H:%M")
-    parser.add_argument("--lag", type=int, default=12)
-    parser.add_argument("--validation-ratio", type=float, default=0.15)
+    parser.add_argument("--train-file")
+    parser.add_argument("--test-file")
+    parser.add_argument("--target-column")
+    parser.add_argument("--timestamp-column")
+    parser.add_argument("--timestamp-format")
+    parser.add_argument("--lag", type=int)
+    parser.add_argument("--validation-ratio", type=float)
     return parser.parse_args()
 
 
@@ -107,6 +126,7 @@ def main() -> None:
     output_directory.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, float | str]] = []
     predictions: dict[str, np.ndarray] = {}
+    truths: dict[str, np.ndarray] = {}
     common_truth: np.ndarray | None = None
 
     for model_name in args.models:
@@ -126,8 +146,11 @@ def main() -> None:
         y_true = scaler.inverse_transform(y_test.reshape(-1, 1)).reshape(-1)
         y_pred = scaler.inverse_transform(predicted_scaled).reshape(-1)
         model_metrics = regression_metrics(y_true, y_pred)
-        results.append({"model": DISPLAY_NAMES[model_name], **model_metrics})
+        results.append(
+            {"model": DISPLAY_NAMES[model_name], "samples": int(len(y_true)), **model_metrics}
+        )
         predictions[model_name] = y_pred
+        truths[model_name] = y_true
         common_truth = y_true if common_truth is None else common_truth
 
         print(f"\n{DISPLAY_NAMES[model_name]}")
@@ -139,7 +162,20 @@ def main() -> None:
 
     summary = pd.DataFrame(results).set_index("model")
     summary.to_csv(output_directory / "model_comparison_metrics.csv")
-    plot_results(common_truth, predictions, output_directory / "overlay_predictions.png")
+    aligned_predictions = {
+        name: prediction
+        for name, prediction in predictions.items()
+        if len(truths[name]) == len(common_truth)
+        and np.allclose(truths[name], common_truth, rtol=0.0, atol=1e-6)
+    }
+    omitted = [name for name in predictions if name not in aligned_predictions]
+    if omitted:
+        labels = ", ".join(DISPLAY_NAMES[name] for name in omitted)
+        print(
+            "\nNot plotting models evaluated on different target samples: "
+            f"{labels}. Their aggregate metrics remain in the CSV with sample counts."
+        )
+    plot_results(common_truth, aligned_predictions, output_directory / "overlay_predictions.png")
     print(f"\n{summary}")
     print(f"\nSaved evaluation files to {output_directory}")
 

@@ -75,6 +75,8 @@ def _prepare_data(args):
             "target_column": args.target_column,
             "train_file": args.train_file,
             "test_file": args.test_file,
+            "timestamp_column": args.timestamp_column,
+            "timestamp_format": args.timestamp_format,
             "input_shape": list(X_train.shape[1:]),
             "batch_size": args.batch_size,
             "epochs": args.epochs,

@@ -188,6 +188,13 @@ class GatedSelfAttentionBlock(Layer):
         self.dropout = Dropout(self.dropout_rate)
         self.normalisation = LayerNormalization(epsilon=1e-6)
 
+    def build(self, input_shape):
+        """Build all stateful sublayers before model deserialisation."""
+        self.attention.build(input_shape, input_shape)
+        self.gate.build(input_shape)
+        self.normalisation.build(input_shape)
+        super().build(input_shape)
+
     def call(self, inputs, training=None):
         attended = self.attention(inputs, inputs, training=training)
         attended = self.dropout(attended, training=training)
