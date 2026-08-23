@@ -15,6 +15,21 @@ The project performs one-step-ahead traffic-flow forecasting for a single sensor
 
 TWDGCN is not included in the runnable pipeline because the supplied dataset contains only one sensor.
 
+## Pipeline
+
+```mermaid
+flowchart TD
+    A["Training and test CSV files"] --> B["Validate columns and timestamps"]
+    B --> C["Chronological train-validation-test split"]
+    C --> D["Fit scaler on the training partition"]
+    D --> E["Create gap-aware 12-step windows"]
+    E --> F["Train the selected forecasting model"]
+    F --> G["Save model, history, and metadata"]
+    G --> H["Reload the matching data configuration"]
+    H --> I["Predict the held-out test period"]
+    I --> J["Inverse scaling, metrics, and plots"]
+```
+
 ## Results
 
 ### Published results
