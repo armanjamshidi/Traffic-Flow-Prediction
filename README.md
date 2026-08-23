@@ -106,4 +106,3 @@ Start with the [Persian interview guide](docs/interview-guide-fa.md), then read 
 ## Data and licensing
 
 The data are derived from Caltrans PeMS. Dataset provenance and split details are documented in [data/README.md](data/README.md). The repository currently does not declare an open-source software license; obtain agreement from all contributors before making it public or selecting a license.
-
