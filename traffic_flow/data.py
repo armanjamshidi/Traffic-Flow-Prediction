@@ -1,9 +1,10 @@
 """Leakage-safe preparation of chronological traffic-flow data.
 
-The CSV rows are treated as ordered observations.  Training, validation and
+The CSV rows are treated as ordered observations. Training, validation and
 test windows are built independently so that a raw CSV row cannot occur in
-both the training and validation arrays.  Every scaler is fitted only on the
-chronological training portion.
+both the training and validation arrays. Every scaler is fitted only on the
+chronological training portion. Missing values are imputed using cross-day
+temporal correlation strictly within each partition to prevent data leakage.
 """
 
 from __future__ import annotations
@@ -17,6 +18,66 @@ from sklearn.preprocessing import MinMaxScaler
 
 
 DEFAULT_TARGET_COLUMN = "Lane 1 Flow (Veh/5 Minutes)"
+
+
+def fill_missing_data_by_temporal_similarity(
+    data: pd.DataFrame,
+    col: str = DEFAULT_TARGET_COLUMN,
+    steps_per_day: int = 288,
+) -> pd.DataFrame:
+    """Imputes missing traffic flow using cross-day temporal correlation.
+
+    Prevents index mismatch, safely calculates correlation, and fills any
+    unmatched trailing observations using the historical step-of-day mean.
+    """
+    df = data.copy()
+    if col not in df.columns:
+        return df
+
+    # Ensure target column is numeric; invalid values become NaN
+    df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    n_total = len(df)
+    n_days = n_total // steps_per_day
+
+    if n_days >= 2:
+        n_trimmed = n_days * steps_per_day
+        values = (
+            df[col]
+            .iloc[:n_trimmed]
+            .to_numpy(dtype=np.float64)
+            .reshape((n_days, steps_per_day))
+        )
+
+        # Correlation between day profiles (columns of values.T)
+        df_matrix = pd.DataFrame(values.T)
+        similarity_matrix = df_matrix.corr(min_periods=10).to_numpy()
+        similarity_matrix = np.nan_to_num(similarity_matrix, nan=-np.inf)
+        np.fill_diagonal(similarity_matrix, -np.inf)
+
+        for i in range(n_days):
+            missing_indices = np.isnan(values[i, :])
+            if not np.any(missing_indices):
+                continue
+
+            sorted_similar_days = np.argsort(similarity_matrix[i, :])[::-1]
+            for step_idx in np.flatnonzero(missing_indices):
+                for sim_day in sorted_similar_days:
+                    if similarity_matrix[i, sim_day] == -np.inf:
+                        break
+                    if not np.isnan(values[sim_day, step_idx]):
+                        values[i, step_idx] = values[sim_day, step_idx]
+                        break
+
+        df.iloc[:n_trimmed, df.columns.get_loc(col)] = values.flatten()
+
+    # Step-of-day mean for remainder steps and unrecovered entries
+    daily_step_mean = df.groupby(np.arange(len(df)) % steps_per_day)[col].transform("mean")
+    df[col] = df[col].fillna(daily_step_mean)
+
+    # Fallback to dataset mean
+    df[col] = df[col].fillna(df[col].mean())
+    return df
 
 
 def _read_csv(path: str | Path) -> pd.DataFrame:
@@ -37,7 +98,7 @@ def _numeric_values(frame: pd.DataFrame, columns: Sequence[str]) -> np.ndarray:
         preview = ", ".join(map(str, bad_rows[:10]))
         raise ValueError(
             "Missing or non-numeric flow values remain at zero-based rows "
-            f"{preview}. Run preprc.py before training."
+            f"{preview}. Check preprocessing and imputation steps."
         )
     return numeric.to_numpy(dtype=np.float32)
 
@@ -89,7 +150,10 @@ def _make_windows(
                 endpoint
                 for endpoint in endpoints
                 if np.all(
-                    np.abs(differences[endpoint - lags + 1 : endpoint + 1] - expected_interval_seconds)
+                    np.abs(
+                        differences[endpoint - lags + 1 : endpoint + 1]
+                        - expected_interval_seconds
+                    )
                     <= tolerance
                 )
             ],
@@ -111,16 +175,23 @@ def process_data(
     target_column: str = DEFAULT_TARGET_COLUMN,
     timestamp_column: str | None = "5 Minutes",
     timestamp_format: str | None = "%d/%m/%Y %H:%M",
+    steps_per_day: int = 288,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, MinMaxScaler]:
-    """Prepare independent chronological windows for a univariate model.
-
-    Returns ``X_train, y_train, X_val, y_val, X_test, y_test, scaler``.
-    All X arrays have shape ``(samples, lags, 1)``.  The scaler is fitted only
-    on the training portion before validation begins.
-    """
+    """Prepare independent chronological windows for a univariate model."""
     train_frame = _read_csv(train)
     test_frame = _read_csv(test)
     train_frame, validation_frame = _chronological_parts(train_frame, lags, validation_ratio)
+
+    # Impute missing values independently to prevent leakage
+    train_frame = fill_missing_data_by_temporal_similarity(
+        train_frame, col=target_column, steps_per_day=steps_per_day
+    )
+    validation_frame = fill_missing_data_by_temporal_similarity(
+        validation_frame, col=target_column, steps_per_day=steps_per_day
+    )
+    test_frame = fill_missing_data_by_temporal_similarity(
+        test_frame, col=target_column, steps_per_day=steps_per_day
+    )
 
     train_timestamps = None
     validation_timestamps = None
@@ -191,7 +262,7 @@ def _reference_interval_seconds(timestamps: pd.Series) -> float:
 def _normalised_deltas(timestamps: pd.Series, reference_seconds: float, maximum: float = 12.0) -> np.ndarray:
     differences = timestamps.diff().dt.total_seconds().to_numpy(
         dtype=np.float64,
-        copy=True
+        copy=True,
     )
     differences[0] = reference_seconds
     deltas = np.clip(differences / reference_seconds, 0.0, maximum)
@@ -211,11 +282,23 @@ def process_delta_data(
     timestamp_format: str | None = None,
     validation_ratio: float = 0.15,
     target_column: str = DEFAULT_TARGET_COLUMN,
+    steps_per_day: int = 288,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, MinMaxScaler]:
     """Prepare flow plus real normalised time gaps for DeltaRelaxLSTM."""
     full_train_frame = _read_csv(train)
     test_frame = _read_csv(test)
     train_frame, validation_frame = _chronological_parts(full_train_frame, lags, validation_ratio)
+
+    # Impute missing values independently to prevent leakage
+    train_frame = fill_missing_data_by_temporal_similarity(
+        train_frame, col=target_column, steps_per_day=steps_per_day
+    )
+    validation_frame = fill_missing_data_by_temporal_similarity(
+        validation_frame, col=target_column, steps_per_day=steps_per_day
+    )
+    test_frame = fill_missing_data_by_temporal_similarity(
+        test_frame, col=target_column, steps_per_day=steps_per_day
+    )
 
     train_timestamps = _parse_timestamps(train_frame, timestamp_column, timestamp_format)
     validation_timestamps = _parse_timestamps(validation_frame, timestamp_column, timestamp_format)
@@ -244,4 +327,3 @@ def process_delta_data(
         test_scaled, _normalised_deltas(test_timestamps, reference_seconds), lags
     )
     return X_train, y_train, X_val, y_val, X_test, y_test, scaler
-
